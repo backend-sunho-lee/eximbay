@@ -1,17 +1,18 @@
+# -*- coding: utf-8 -*-
 import operator
 import hashlib
 import requests
 from jinja2 import Template
 
 class Eximbay(object):
-    def __init__(self, eximbay_mid, eximbay_secret, eximbay_env='test'):
-        self.eximbay_mid = eximbay_mid
-        self.eximbay_secret = eximbay_secret
+    def __init__(self, exb_mid, exb_secret, exb_env='prod'):
+        self.exb_mid = exb_mid
+        self.exb_secret = exb_secret
 
-        if eximbay_env == 'test':
-            self.eximbay_url = 'https://secureapi.test.eximbay.com'
-        elif eximbay_env == 'prod':
-            self.eximbay_url = 'https://secureapi.eximbay.com'
+        if exb_env == 'test':
+            self.exb_url = 'https://secureapi.test.eximbay.com'
+        elif exb_env == 'prod':
+            self.exb_url = 'https://secureapi.eximbay.com'
 
     def _fgkey(self, **kwargs):
         """
@@ -31,7 +32,7 @@ class Eximbay(object):
         params = params[0:-1]
 
         # B: secretkey와 A의 데이터를 “?”로 연결
-        sp = self.eximbay_secret + '?' + params
+        sp = self.exb_secret + '?' + params
 
         # C: B의 결과를 SHA256 함수를 통해 Hashing 하여 생성합니다.
         # SHA256를 위해 bytes 변환 시, character set은 반드시 UTF-8로 사용
@@ -45,12 +46,20 @@ class Eximbay(object):
         :param kwargs: 필수 요소들을 입력해야합니다. 굉장히 많습니다.
         :return: 엑심베이가 제공하는 결제 페이지로 넘어갑니다.
         """
-        url = '{}/Gateway/BasicProcessor.krp'.format(self.eximbay_url)
+        data = {
+            'ver': '230', # 연동버전
+            'txntype': 'PAYMENT', # 거래 타입
+            'charset': 'UTF-8',
+            'mid': self.exb_mid
+        }
+
+        url = '{}/Gateway/BasicProcessor.krp'.format(self.exb_url)
         for key in ['statusurl', 'returnurl', 'ref', 'ostype', 'displaytype', 'paymethod', 'cur', 'amt', 'lang', 'shop', 'buyer', 'email', 'tel']:
             if key not in kwargs:
                 raise KeyError('Essential parameter is missing!: %s' % key)
 
-        kwargs['fgkey'] = self._fgkey(**kwargs)
+        data.update(kwargs)
+        data['fgkey'] = self._fgkey(**data)
 
         template = Template("""
         <!DOCTYPE html>
@@ -71,7 +80,7 @@ class Eximbay(object):
         </body>
         </html>
         """)
-        return template.render(reqUrl=url, data=kwargs)
+        return template.render(reqUrl=url, data=data)
 
     def refund(self, **kwargs):
         """
@@ -80,29 +89,56 @@ class Eximbay(object):
         :param kwargs: 필수 요소들을 입력해야합니다. 굉장히 많습니다.
         :return:
         """
-        url = '{}/Gateway/DirectProcessor.krp'.format(self.eximbay_url)
-        for key in ['returnurl', 'refundtype', 'refundamt', 'ref', 'transid', 'refundid', 'reason', 'ostype', 'displaytype', 'paymethod', 'cur', 'amt', 'lang']:
+        data = {
+            'ver': '230', # 연동버전
+            'txntype': 'REFUND', # 거래 타입
+            'charset': 'UTF-8',
+            'mid': self.exb_mid
+        }
+
+        url = '{}/Gateway/DirectProcessor.krp'.format(self.exb_url)
+        for key in ['refundtype', 'refundamt', 'ref', 'transid', 'refundid', 'reason', 'ostype', 'displaytype', 'paymethod', 'cur', 'amt', 'lang']:
             if key not in kwargs:
                 raise KeyError('Essential parameter is missing!: %s' % key)
 
-        res = requests.post(url, data=kwargs)
+        data.update(kwargs)
+        res = requests.post(url, data=data)
+
+        # res의 fgkey로 위조 검사하기
+
         return res.content
 
     def query(self, **kwargs):
         """
-        엑심베이 결제 조회 요청
+        응답값과 결제내역조회의 결과값을 비교하여 위조를 검사합니다.
 
         :param kwargs: 필수 요소들을 입력해야합니다. 굉장히 많습니다.
         :return:
         """
-        url = '{}/Gateway/DirectProcessor.krp'.format(self.eximbay_url)
+        data = {
+            'ver': '230', # 연동버전
+            'txntype': 'QUERY', # 거래 타입
+            'charset': 'UTF-8',
+            'mid': self.exb_mid
+        }
+
+        url = '{}/Gateway/DirectProcessor.krp'.format(self.exb_url)
         for key in ['returnurl', 'keyfield', 'ref', 'transid', 'cur', 'amt', 'lang']:
             if key not in kwargs:
                 raise KeyError('Essential parameter is missing!: %s' % key)
 
-        res = requests.post(url, data=kwargs)
+        data.update(kwargs)
+        res = requests.post(url, data=data)
 
         #: returnurl 없을 때 쿼리스트링으로 들어오는 응답을 바꾸는 방법
         from urllib.parse import parse_qs
         import json
-        return json.dumps(parse_qs(res.text))
+        res_json = json.dumps(parse_qs(res.text))
+
+        # res_json의 값을 가지고 fgkey 위조 검사하기
+
+        return False
+
+    def is_paid(self):
+        # 주문번호로 결제 상태를 조회합니다.
+        pass
