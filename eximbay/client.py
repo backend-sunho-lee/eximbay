@@ -3,6 +3,7 @@ import operator
 import hashlib
 import requests
 from jinja2 import Template
+from urllib.parse import urlsplit, parse_qsl
 
 class Eximbay(object):
     def __init__(self, exb_mid, exb_secret, exb_env='prod'):
@@ -14,6 +15,23 @@ class Eximbay(object):
         elif exb_env == 'prod':
             self.exb_url = 'https://secureapi.eximbay.com'
 
+    def make_querystring(self, **kwargs):
+        """
+        이렇게 쿼리스트링을 만드는 이유: 다른 라이브러리를 쓰면 한글이 깨져서 엑심베이가 싫어합니다.
+        더 좋은 대안이 있다면 알려주세요!
+
+        :param kwargs:
+        :return:
+        """
+        # 모든 요청/응답 데이터의 key 값들을 기준으로 sorting
+        data = sorted(kwargs.items(), key=operator.itemgetter(0))
+
+        params = ''
+        for (key, value) in data:
+            params += key + '=' + str(value) + '&'
+        params = params[0:-1]
+        return params
+
     def _fgkey(self, **kwargs):
         """
         fgkey는 가맹점과 Eximbay 사이에 전송되는 데이터의 유효성을 확인하기 위해 사용됩니다.
@@ -21,15 +39,7 @@ class Eximbay(object):
         :param kwargs: 모든 요청/응답 데이터
         :return: fgkey를 만들어 반환합니다.
         """
-        # A : 모든 요청/응답 데이터의 key 값들을 기준으로 sorting
-        data = sorted(kwargs.items(), key=operator.itemgetter(0))
-
-        # 이렇게 쿼리스트링을 만드는 이유: 다른 라이브러리를 쓰면 한글이 깨져서 엑심베이가 싫어합니다.
-        #! 더 좋은 대안이 있다면 알려주세요!
-        params = ''
-        for (key, value) in data:
-            params += key + '=' + value + '&'
-        params = params[0:-1]
+        params = self.make_querystring(**kwargs)
 
         # B: secretkey와 A의 데이터를 “?”로 연결
         sp = self.exb_secret + '?' + params
@@ -54,7 +64,7 @@ class Eximbay(object):
         }
 
         url = '{}/Gateway/BasicProcessor.krp'.format(self.exb_url)
-        for key in ['statusurl', 'returnurl', 'ref', 'ostype', 'displaytype', 'paymethod', 'cur', 'amt', 'lang', 'shop', 'buyer', 'email', 'tel']:
+        for key in ['statusurl', 'returnurl', 'ref', 'ostype', 'displaytype', 'paymethod', 'cur', 'amt', 'lang', 'buyer', 'email']:
             if key not in kwargs:
                 raise KeyError('Essential parameter is missing!: %s' % key)
 
@@ -123,21 +133,20 @@ class Eximbay(object):
         }
 
         url = '{}/Gateway/DirectProcessor.krp'.format(self.exb_url)
-        for key in ['returnurl', 'keyfield', 'ref', 'transid', 'cur', 'amt', 'lang']:
+        for key in ['ref', 'cur', 'amt']:
             if key not in kwargs:
                 raise KeyError('Essential parameter is missing!: %s' % key)
 
         data.update(kwargs)
-        res = requests.post(url, data=data)
+        data['fgkey'] = self._fgkey(**data)
 
-        #: returnurl 없을 때 쿼리스트링으로 들어오는 응답을 바꾸는 방법
-        from urllib.parse import parse_qs
-        import json
-        res_json = json.dumps(parse_qs(res.text))
+        _res = requests.post(url, data=data)
+        res = dict(parse_qsl(urlsplit(_res.text).path))
 
-        # res_json의 값을 가지고 fgkey 위조 검사하기
-
-        return False
+        if res['rescode'] != '0000':
+            return False, res
+        else:
+            return True, res
 
     def is_paid(self):
         # 주문번호로 결제 상태를 조회합니다.
